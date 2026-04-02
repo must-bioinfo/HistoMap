@@ -1,8 +1,8 @@
 # HistoMapTx
-<img src="figures/logo.png" align="right" width="150px" />
-HistoMap is a Python library for analyzing and visualizing histological annotations alongside spatially resolved transcriptomics data (Visium). It provides tools for processing, analyzing, and visualizing GeoJSON-based tissue annotations with spatial transcriptomics spot data.  
+<img src="figures/logo.svg" align="right" width="150px" />
+HistoMap is a Python library for analyzing and visualizing histological annotations alongside spatially resolved transcriptomics data (Visium, VisiumHD and Xenium). It provides tools for processing, analyzing, and visualizing GeoJSON-based tissue annotations with spatial transcriptomics spot data.  
 It is integrated with QuPath and ImageJ annotations, and interface with scanpy, squidpy and Seurat through either SpatialData or generation of MetaData.
-\n
+
 Documentation is available here : https://histomaptx.readthedocs.io/en/latest/
 
 ## Features
@@ -20,54 +20,12 @@ Documentation is available here : https://histomaptx.readthedocs.io/en/latest/
 pip install histomaptx
 ```
 
-## Dependencies
-
-HistoMap requires:
-- geopandas
-- pandas
-- numpy
-- matplotlib
-- plotly
-- scipy
-- shapely
-
-## Quick Start
-
-```python
-import histomap as hm
-import squidpy as sq
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-
-# Load Visium data (with squidpy for example)
-adata = sq.datasets.visium_fluo_moran_test()
-spatial_data = adata.uns['spatial']
-
-# Load annotations from a GeoJSON file
-histo = hm.HistoMap("annotations.geojson", spatial_data)
-
-# Display a summary of the annotations
-print(histo.generate_summary())
-
-# Plot the annotations
-histo.plot_annotations()
-
-# Change the plotting order
-histo.change_plot_order(["Tumor", "Stroma", "Immune cells"])
-
-# Compute overlaps between annotations and Visium spots
-histo.compute_overlap_annotation()
-
-# Plot spots colored by their overlap with a specific annotation
-histo.plot_annotation_overlay("Tumor")
-```
 
 ## Core Functionality
 
 ### Loading and Processing Annotations
 
-HistoMap automatically processes annotation files in various formats and extracts key information:
+HistoMap automatically processes annotation files in geojson format from QuPath and extracts key information:
 
 ```python
 # Initialize with a GeoJSON file
@@ -196,46 +154,6 @@ overlapping_spots = overlaps[2]  # Third return value contains the overlapping s
 # Get spot IDs for further analysis
 overlapping_spot_ids = overlapping_spots.index.tolist()
 ```
-
-## API Reference
-
-### HistoMap Class
-
-The main class for working with histological annotations and spatial data.
-
-#### Methods
-
-- `__init__(file_name, visium_spatialdata)`: Initialize with a GeoJSON file and Visium spatial data
-- `generate_spot_geodata()`: Generate circular geometries for Visium spots
-- `read_geojson_based_on_type(file_name)`: Read GeoJSON data based on file format
-- `_extract_annotations()`: Process annotation data from GeoJSON
-- `add_area_column()`: Add area calculations to annotations
-- `generate_summary()`: Create a comprehensive summary of annotation metrics
-- `display_plot_order()`: Show the current plot order of annotations
-- `change_plot_order(order_list)`: Modify the order in which annotations are plotted
-- `plot_annotations(fill, contour)`: Create a 2D plot of annotations
-- `compute_overlap_annotation()`: Calculate overlap between spots and annotations
-- `plot_annotation_overlay(annotation)`: Visualize overlap between spots and a specific annotation
-- `plot_annotation_order(fill, contour, elevation_factor)`: Create a 3D plot with annotations at different z-levels
-- `plot_annotation_order_interactive(fill, contour, elevation_factor)`: Create an interactive 3D plot using Plotly
-- `plot_combined_annotation_overlap(annotation1, annotation2)`: Find spots overlapping with two annotations
-
-## FAQ
-
-### How does HistoMap handle large annotation files?
-
-HistoMap efficiently processes GeoJSON files using GeoPandas' spatial indexing capabilities, which helps manage large datasets. For very large files, you may need to increase your system's memory allocation.
-
-### Can I use HistoMap with non-Visium spatial data?
-
-While HistoMap is optimized for Visium data, you can adapt it for other spatial transcriptomics platforms by constructing a compatible spatial data object.
-
-### How can I integrate HistoMap with other spatial analysis tools?
-
-HistoMap works well with the broader spatial transcriptomics ecosystem, including:
-- Squidpy for additional spatial statistics
-- Scanpy for cell-type identification
-- Seaborn for advanced visualizations of results
 
 
 ## License
