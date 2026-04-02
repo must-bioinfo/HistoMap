@@ -3,7 +3,7 @@
 HistoMap is a Python library for analyzing and visualizing histological annotations alongside spatially resolved transcriptomics data (Visium, VisiumHD and Xenium). It provides tools for processing, analyzing, and visualizing GeoJSON-based tissue annotations with spatial transcriptomics spot data.  
 It is integrated with QuPath and ImageJ annotations, and interface with scanpy, squidpy and Seurat through either SpatialData or generation of MetaData.  
   
-
+  
 **Documentation is available here :** https://histomaptx.readthedocs.io/en/latest/
 
 ## Installation
@@ -20,8 +20,9 @@ pip install histomaptx
 HistoMap automatically processes annotation files in geojson format from QuPath and extracts key information:
 
 ```python
+import histomaptx as hm
 # Initialize with a GeoJSON file
-histo = HistoMap("annotations.geojson", visium_spatial_data, '/path/to/image.tiff')
+histo = hm.HistoMap("annotations.geojson", visium_spatial_data, '/path/to/image.tiff')
 
 ```
 
@@ -63,15 +64,12 @@ histo.plot_annotations(fill=["red", "blue", "green"], contour=["black", "black",
 
 ```python
 # Create a 3D plot with annotations at different z-levels
-histo.plot_annotation_order(fill=True, elevation_factor=1.5)
-
-# Create an interactive 3D plot using Plotly
-histo.plot_annotation_order_interactive(fill=True, elevation_factor=1.5)
+histo.plot_annotation_order()
 ```
 
 ### Controlling Annotation Order
 
-The order in which annotations are plotted can be crucial for visualization:
+The order in which annotations are plotted can be crucial for generating the final map:
 
 ```python
 # Display current plot order
@@ -81,9 +79,9 @@ histo.display_plot_order()
 histo.change_plot_order(["Tumor", "Stroma", "Immune cells"])
 ```
 
-### Spatial Analysis with Visium Spots
+### Compute overlap of annotation with spatial units
 
-Analyze the overlap between histological annotations and Visium spots:
+Compute the overlap between histological annotations and Visium spots:
 
 ```python
 # Compute overlap between annotations and spots
@@ -94,6 +92,16 @@ histo.plot_annotation_overlay("Tumor")
 
 # Find spots that overlap with two different annotations
 histo.plot_combined_annotation_overlap("Tumor", "Immune cells")
+```
+
+### Generate the annotation map 
+
+Once overlaps are computed and positivity threshold set, we can generate the final annotation map
+
+```python
+histomap.generate_annotation_map(annotate_all=True)  
+
+hm.plot_annotation_map(histomap, resolution='lowres') 
 ```
 
 ## Advanced Usage
