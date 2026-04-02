@@ -2,17 +2,9 @@
 <img src="figures/logo.svg" align="right" width="150px" />
 HistoMap is a Python library for analyzing and visualizing histological annotations alongside spatially resolved transcriptomics data (Visium, VisiumHD and Xenium). It provides tools for processing, analyzing, and visualizing GeoJSON-based tissue annotations with spatial transcriptomics spot data.  
 It is integrated with QuPath and ImageJ annotations, and interface with scanpy, squidpy and Seurat through either SpatialData or generation of MetaData.
-
-Documentation is available here : https://histomaptx.readthedocs.io/en/latest/
-
-## Features
-
-- **Flexible File Support**: Read annotations from various formats (GeoJSON, gzipped, or zipped files)
-- **Comprehensive Metrics**: Calculate area, perimeter, circularity, solidity, and other geometric properties
-- **Interactive Visualization**: Generate 2D and 3D visualizations of tissue annotations
-- **Annotation Ordering**: Control the rendering order of annotations for clearer visualization
-- **Spatial Analysis**: Compute overlaps between annotations and Visium spots
-- **Summary Statistics**: Generate detailed morphological summaries for each annotation
+  
+  
+** Documentation is available here : https://histomaptx.readthedocs.io/en/latest/
 
 ## Installation
 
@@ -138,23 +130,6 @@ fig, ax = plt.subplots(figsize=(10, 10))
 histo.plot_annotations()
 plt.savefig("annotations.png", dpi=300, bbox_inches="tight")
 ```
-
-### Working with Spot-Level Data
-
-After computing overlaps, you can extract spots that overlap with specific annotations:
-
-```python
-# Compute overlaps
-histo.compute_overlap_annotation()
-
-# Get spots that overlap with both tumor and immune cells
-overlaps = histo.plot_combined_annotation_overlap("Tumor", "Immune cells")
-overlapping_spots = overlaps[2]  # Third return value contains the overlapping spots
-
-# Get spot IDs for further analysis
-overlapping_spot_ids = overlapping_spots.index.tolist()
-```
-
 
 ## License
 
