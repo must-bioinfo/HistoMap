@@ -1,0 +1,19 @@
+/* docs/_static/custom.css */
+.wy-side-nav-search {
+    background-color: #2980B9;
+}
+
+.wy-nav-content {
+    max-width: 1200px;
+}
+
+/* Improve code block styling */
+.highlight {
+    background: #f8f8f8;
+}
+
+/* Better table styling */
+.rst-content table.docutils {
+    width: 100%;
+    margin-bottom: 2em;
+}
