@@ -12,6 +12,7 @@ build/
 
 .ipynb_checkpoints/
 
-*.ipynb
+/*.ipynb
+
 
 .DS_Store

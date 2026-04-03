@@ -1,1 +1,1 @@
-# HistoMapTx Examples Gallery\n\nThis gallery shows examples of using HistoMapTx for spatial transcriptomics analysis.
+# HistoMapTx Notebooks
