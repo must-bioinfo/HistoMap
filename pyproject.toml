@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "histomaptx"
-version = "0.1.0"
+version = "0.1.2"
 description = "A Python library for analyzing histological annotations alongside spatial transcriptomics data"
 readme = "README.md"
 authors = [
@@ -14,6 +14,7 @@ license = "MIT"
 
 keywords = ["spatial transcriptomics", "histology", "annotations", "visium"]
 dependencies = [
+    "setuptools",
     "geopandas",
     "pandas",
     "numpy",
@@ -39,4 +40,4 @@ Documentation = "https://histomaptx.readthedocs.io"
 Repository = "https://github.com/must-bioinfo/HistoMap"
 
 [tool.setuptools]
-packages = ["histomaptx"]  # Explicitly list only your main package directory
+packages = ["histomaptx"]  
