@@ -1,4 +1,4 @@
-# Utils 
+# Utils
 import geopandas as gpd
 import pandas as pd
 import ast
@@ -9,11 +9,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import warnings
 from shapely import MultiPolygon
-import spatialdata
-import spatialdata_io
-import geopandas as gpd
 from shapely.geometry import Polygon, Point
-from rtree import index
 import numpy as np
 
 

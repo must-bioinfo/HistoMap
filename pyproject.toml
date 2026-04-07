@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "histomaptx"
-version = "0.1.2"
+version = "0.1.6"
 description = "A Python library for analyzing histological annotations alongside spatial transcriptomics data"
 readme = "README.md"
 authors = [
-    {name = "Your Name", email = "your.email@example.com"},
+    {name = "Hugo Croizer", email = "hugo.croizer@u-paris.fr"},
 ]
 license = "MIT"
 
@@ -16,21 +16,10 @@ keywords = ["spatial transcriptomics", "histology", "annotations", "visium"]
 dependencies = [
     "setuptools",
     "geopandas",
-    "pandas>=1.5",
-    "numpy>=1.23",
-    "matplotlib<3.9",
     "seaborn",
-    "scipy",
-    "shapely",
-    "rtree",
-    "scanpy>=1.9,<1.11",
-    "statsmodels",
     "rasterio",
-    "tifffile",
     "spatialdata",
-    "spatialdata-io",
-    "spatialdata-plot",
-    "plotly"
+    "spatialdata-plot"
 ]
 requires-python = ">=3.8"
 

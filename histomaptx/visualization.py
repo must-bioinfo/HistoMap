@@ -8,10 +8,8 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import warnings
 import spatialdata
-import spatialdata_io
 import geopandas as gpd
 from shapely.geometry import Polygon, Point
-from rtree import index
 import numpy as np
 from . import histomap_utils
 import seaborn as sns 
