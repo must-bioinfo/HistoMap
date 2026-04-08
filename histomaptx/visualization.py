@@ -1272,22 +1272,28 @@ def plot_visium_hd(
     bin_str = f"{int(bin_size):03d}um"
 
     # ---- 1️⃣ Map resolution ----
-    coord_map = {
-        "lowres": "downscaled_lowres",
-        "hires": "downscaled_hires",
-        "global": "global",
-    }
-
-    if resolution not in coord_map:
+    if resolution not in ("lowres", "hires", "global"):
         raise ValueError("resolution must be 'lowres', 'hires', or 'global'")
-
-    coord_system = coord_map[resolution]
 
     # ---- 2️⃣ Select image by name pattern ----
     image_key = next(
         (k for k in sdata.images.keys() if resolution in k.lower()),
         None,
     )
+
+    # ---- derive coord_system by searching registered coordinate systems ----
+    if resolution == "global":
+        coord_system = "global"
+    else:
+        coord_system = next(
+            (cs for cs in sdata.coordinate_systems if resolution in cs.lower()),
+            None,
+        )
+        if coord_system is None:
+            raise ValueError(
+                f"Could not find a coordinate system matching '{resolution}'. "
+                f"Available: {list(sdata.coordinate_systems)}"
+            )
 
     # ---- 3️⃣ Select shape via bin size ----
     shape_key = next(
