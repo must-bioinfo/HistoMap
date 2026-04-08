@@ -452,11 +452,26 @@ class HistoMap:
 
     def _extract_annotations(self):
         """Extract annotations from 'classification' column and compute area."""
-        self.data_exploded = self.data_exploded.dropna(subset=['classification'])
+        cols = self.data_exploded.columns
 
-        self.data_exploded['classification'] = self.data_exploded['classification'].apply(ast.literal_eval)
-        #self.data_exploded['Annotation'] = self.data_exploded['classification'].apply(lambda x: x.get('name', None))
-        self.data_exploded['Annotation'] = self.data_exploded['classification'].apply(lambda x: x.get('name', None).replace(' ', '_') if x.get('name') else None)
+        if 'classification' in cols and self.data_exploded['classification'].notna().any():
+            self.data_exploded = self.data_exploded.dropna(subset=['classification'])
+            self.data_exploded['classification'] = self.data_exploded['classification'].apply(
+                lambda x: x if isinstance(x, dict) else ast.literal_eval(x)
+            )
+            self.data_exploded['Annotation'] = self.data_exploded['classification'].apply(
+                lambda x: x.get('name', None).replace(' ', '_') if x.get('name') else None
+            )
+        elif 'name' in cols:
+            # QuPath export without classification: annotation name is in the 'name' column directly
+            self.data_exploded['Annotation'] = self.data_exploded['name'].apply(
+                lambda x: x.replace(' ', '_') if isinstance(x, str) else None
+            )
+        else:
+            raise ValueError(
+                "Could not find annotation names in the GeoJSON file. "
+                "Make sure your QuPath annotations have a name or classification set."
+            )
 
     def _setup_plot_order(self):
         """Set up the plot_order based on the alphabetical order of annotations."""
