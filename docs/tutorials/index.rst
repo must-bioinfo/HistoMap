@@ -14,6 +14,7 @@ Each tutorial includes practical examples with sample data and explanations of k
    :maxdepth: 1
    :caption: Tutorial Notebooks:
 
+   ../notebooks/0_Input_and_QuPath_annotation.ipynb
    ../notebooks/1_Tissue_detection.ipynb
    ../notebooks/2_Mapping_annotations.ipynb
    ../notebooks/3_Advanced_annotations.ipynb
