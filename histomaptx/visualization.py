@@ -1362,17 +1362,21 @@ def plot_visium(
     display_image=True,
     save=None,
     cmap=None, 
-    palette=None, groups=None
-    ):
+    palette=None, 
+    groups=None
+):
+    import matplotlib.pyplot as plt
 
     if resolution not in ("lowres", "hires", "global"):
         raise ValueError("resolution must be 'lowres', 'hires', or 'global'")
 
+    # ---- 1️⃣ Select image ----
     image_key = next(
         (k for k in sdata.images.keys() if resolution in k.lower()),
         None,
     )
 
+    # ---- 2️⃣ Select coordinate system ----
     if resolution == "global":
         coord_system = "global"
     else:
@@ -1385,7 +1389,6 @@ def plot_visium(
                 f"Could not find a coordinate system matching '{resolution}'. "
                 f"Available: {list(sdata.coordinate_systems)}"
             )
-
 
     # ---- 3️⃣ Select shapes (spots) ----
     shape_key = list(sdata.shapes.keys())[0]
@@ -1403,29 +1406,35 @@ def plot_visium(
             target_coordinate_system=coord_system,
         )
 
-    # ---- 6️⃣ Prepare figure ----
+    kwargs = dict(color=annotation_key)
+
+    if palette is not None:
+        kwargs["palette"] = palette
+        kwargs["groups"] = groups
+        print(palette)
+    elif cmap is not None:
+        kwargs["cmap"] = cmap
+        print(cmap)
+    print(kwargs)
+    p = sdata.pl.render_shapes(shape_key, **kwargs)
+
     fig, ax = plt.subplots(figsize=figsize)
 
-    if display_image:
+    if display_image and image_key is not None:
         p = sdata.pl.render_images(image_key).pl.render_shapes(
             shape_key,
-            color=annotation_key,
-            cmap=cmap,
-            palette=palette,groups=groups,
+            **kwargs,
         )
     else:
         p = sdata.pl.render_shapes(
             shape_key,
-            color=annotation_key,
-            cmap=cmap,
-            palette=palette,groups=groups,
+            **kwargs,
         )
 
-    # ---- 7️⃣ Save / show ----
+    # ---- 8️⃣ Save / show ----
     if save is not None:
         p.pl.show(
             coordinate_systems=coord_system,
-            
             ax=ax,
             return_ax=False,
         )
@@ -1434,7 +1443,6 @@ def plot_visium(
 
     p.pl.show(
         coordinate_systems=coord_system,
-        
         ax=ax,
     )
 
