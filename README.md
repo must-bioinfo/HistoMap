@@ -12,6 +12,17 @@ It is integrated with QuPath and ImageJ annotations, and interface with scanpy, 
 pip install histomaptx
 ```
 
+## Supported Technologies
+
+HistoMap works with any spatially resolved transcriptomics platform exposed through a [SpatialData](https://spatialdata.scverse.org/) object. The unit that annotations are overlapped against depends on the platform:
+
+| Technology | `spatial_type` | Overlap unit |
+|---|---|---|
+| Visium | `'visium'` | Circular spot |
+| Visium HD | `'visium_hd'` | Square bin (configurable bin size) |
+| Xenium | `'xenium'` | Cell segmentation polygon |
+
+More platforms can be added upon request - please open an issue on the GitHub repository describing your data.
 
 ## Core Functionality
 

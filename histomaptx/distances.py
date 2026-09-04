@@ -1,14 +1,23 @@
 import matplotlib.pyplot as plt
 import geopandas as gpd
 
-def compute_nearest_annotation_distance(self, annotation):
+def compute_nearest_annotation_distance(self, annotation, method='edge'):
     """
     For each spot that does not have the given annotation, compute the distance to the closest spot with the annotation.
 
     Args:
         self: HistoMap object containing spot_geodata.
         annotation: Annotation type to use as reference (e.g., "Tumor").
+        method: 'edge' (default) computes the minimum distance between the spot geometries
+                themselves (0 if two spots touch or overlap) - the biologically meaningful
+                distance for most boundary/proximity questions (e.g. "how far is this cell
+                from the tumor margin"), since it accounts for spot/cell size and shape.
+                'centroid' computes center-to-center distance between spots instead, ignoring
+                their size and shape.
     """
+    if method not in ('centroid', 'edge'):
+        raise ValueError("method must be 'centroid' or 'edge'.")
+
     # Filter spots with the given annotation
     annotated_spots = self.spot_geodata[self.spot_geodata['Annotation_map'] == annotation]
     other_spots = self.spot_geodata[self.spot_geodata['Annotation_map'] != annotation]
@@ -17,15 +26,16 @@ def compute_nearest_annotation_distance(self, annotation):
     if annotated_spots.empty:
         raise ValueError(f"No spots found with annotation '{annotation}'.")
 
-    # Extract geometries
-    annotated_points = annotated_spots.geometry.centroid
-    other_points = other_spots.geometry.centroid
+    # Extract geometries: either the spot centroids, or the raw spot geometries for edge distance
+    if method == 'centroid':
+        annotated_geoms = annotated_spots.geometry.centroid
+        other_geoms = other_spots.geometry.centroid
+    else:
+        annotated_geoms = annotated_spots.geometry
+        other_geoms = other_spots.geometry
 
     # Compute nearest distances
-    distances = []
-    for point in other_points:
-        nearest_point = min(annotated_points, key=lambda p: point.distance(p))
-        distances.append(point.distance(nearest_point))
+    distances = [min(geom.distance(g) for g in annotated_geoms) for geom in other_geoms]
 
     # Assign distances to the non-annotated spots
     self.spot_geodata.loc[other_spots.index, f'distance_to_{annotation}'] = distances

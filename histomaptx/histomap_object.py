@@ -314,11 +314,30 @@ class HistoMap:
         first_key = next(iter(images))
         return self._get_highest_resolution(images[first_key])
         
-    def _get_highest_resolution(self, image):
+    def _get_highest_resolution(self, image, target_max_dim=2000):
+        """
+        Pick the image (or pyramid level) used as the plotting background.
+
+        `plotting_image` is only ever used as a low-detail background behind vector
+        overlays (cells, annotations, spots) - it is never used for any computation.
+        For a multiscale pyramid (DataTree, e.g. Xenium's `morphology.ome.tif`, which
+        typically has scale0..scaleN), unconditionally taking scale0 means loading and
+        rendering the *full-resolution* image (tens of thousands of pixels per side)
+        on every single plot call, which is what makes Xenium plots so slow. Instead,
+        pick the coarsest pyramid level that still has at least `target_max_dim`
+        pixels on its longest side, falling back to the finest level available if
+        every level is already smaller than that.
+        """
         # Extract DataArray from DataTree if needed
-        if hasattr(image, "children"):  # DataTree
-            scale0 = list(image.children.values())[0]
-            image = scale0["image"]  # DataArray
+        if hasattr(image, "children"):  # DataTree (multiscale pyramid)
+            scale_arrays = [node["image"] for node in image.children.values()]
+            chosen = scale_arrays[0]  # fallback: finest level, if all levels are small
+            for arr in reversed(scale_arrays):  # coarsest -> finest
+                max_dim = max(arr.sizes.get("y", 0), arr.sizes.get("x", 0))
+                if max_dim >= target_max_dim:
+                    chosen = arr
+                    break
+            image = chosen  # DataArray
 
         # Ensure channel-first format (c, y, x)
         if "c" not in image.dims:
@@ -343,6 +362,33 @@ class HistoMap:
 
     
     
+
+    def _get_table_key(self):
+        """
+        Return the key of the table in `visium_spatialdata.tables` that corresponds to this
+        HistoMap object.
+
+        For visium_hd, a SpatialData object holds one table per bin size (e.g. one for
+        'square_002um', one for 'square_008um', ...), so the right one has to be picked using
+        `self.bin_size` - the same matching used elsewhere (e.g. compute_annotation_overlap,
+        plot_visium_hd). For visium/xenium there is normally a single table, conventionally
+        named 'table'; fall back to whichever single table is present if it isn't.
+        """
+        sdata = self.visium_spatialdata
+
+        if self.visium_type == "visium_hd":
+            bin_str = f"{int(self.bin_size):03d}um"
+            try:
+                return next(k for k in sdata.tables.keys() if bin_str in k)
+            except StopIteration:
+                raise ValueError(
+                    f"No table found for bin size {bin_str} in visium_spatialdata.tables. "
+                    f"Available tables: {list(sdata.tables.keys())}"
+                )
+
+        if "table" in sdata.tables:
+            return "table"
+        return next(iter(sdata.tables.keys()))
 
     def generate_spot_geodata(self):
         """Function to generate a dataframe from the spatialdata object as circle geodata"""
@@ -398,14 +444,50 @@ class HistoMap:
                 else:
                     selected_bin = available_bins[0]
 
+            # Keep self.bin_size in sync with what was actually selected (it may have been
+            # None, deferring to the default-bin logic above) - _get_table_key() and
+            # compute_annotation_overlap() both key off self.bin_size later.
+            self.bin_size = selected_bin
+
             selected_key = key_bin_map[selected_bin]
             coords_gdf = self.visium_spatialdata.shapes[selected_key]
 
             gdf = coords_gdf.copy().reset_index(drop=True)
             gdf["spot_id"] = range(len(gdf))
 
+            # Unlike spatialdata_io's visium() reader, visium_hd() does not set 'spot_id' on
+            # the matching table's obs itself - set it here, in the same row order as `gdf`
+            # (the shapes and table for a given bin size are read together and share row
+            # order), so to_anndata()/to_spatialdata()/spot_metadata_to_df() can merge on it
+            # (mirrors what's done for xenium below).
+            table_key = next(k for k in self.visium_spatialdata.tables.keys() if f"{selected_bin:03d}um" in k)
+            self.visium_spatialdata.tables[table_key].obs["spot_id"] = range(len(gdf))
+
         elif self.visium_type == "xenium":
             pixel_size = 0.2125
+
+            # Xenium SpatialData objects typically expose several Shapes elements (e.g. both
+            # 'cell_boundaries' and 'nucleus_boundaries'), only one of which actually lines up
+            # with the expression table (same length, same index/order). Picking
+            # shapes.keys()[0] blindly (as visium/visium_hd effectively do, where there's only
+            # one relevant shapes element) can silently select the wrong one here, so match
+            # explicitly against the table's obs index instead.
+            table = self.visium_spatialdata.tables['table']
+            table_index = list(table.obs.index)
+
+            shape_keys = list(self.visium_spatialdata.shapes.keys())
+            matching_key = next(
+                (k for k in shape_keys
+                 if list(self.visium_spatialdata.shapes[k].index) == table_index),
+                None,
+            )
+            if matching_key is None:
+                raise ValueError(
+                    "Could not find a Shapes element whose index matches the expression "
+                    f"table's obs index. Available shapes: {shape_keys}. Xenium data usually "
+                    "has a 'cell_boundaries' element that should match."
+                )
+            coords_gdf = self.visium_spatialdata.shapes[matching_key]
 
             gdf = coords_gdf.copy()
 
@@ -428,7 +510,11 @@ class HistoMap:
             gdf = gdf.reset_index(drop=True)
             gdf["spot_id"] = range(len(gdf))
 
-
+            # spatialdata_io's visium()/visium_hd() readers set adata.obs['spot_id']
+            # themselves (used by to_anndata()/to_spatialdata()'s merge); xenium() does not,
+            # so set it here too, in the same row order as `gdf` (guaranteed above to match
+            # the table's row order).
+            table.obs['spot_id'] = range(len(gdf))
 
         else:
             raise ValueError(f"Unsupported visium_type '{self.visium_type}'")
@@ -666,6 +752,16 @@ class HistoMap:
                         self.spot_geodata[overlap_col].values
                     )
 
+            elif self.visium_type == "xenium":
+
+                sdata = self.visium_spatialdata
+                table_key = list(sdata.tables.keys())[0]
+
+                if overlap_col not in sdata.tables[table_key].obs:
+                    sdata.tables[table_key].obs[overlap_col] = (
+                        self.spot_geodata[overlap_col].values
+                    )
+
 
         # Call set_positive for each annotation in the list
         for ann in annotation_names:
@@ -861,57 +957,158 @@ class HistoMap:
 
     
     def to_anndata(self):
-        """Return a anndata object with metadata from histomap"""
-        adata = self.visium_spatialdata.tables['table'].copy()
+        """Return an AnnData object with metadata from histomap.
+
+        In addition to merging in the *_overlap / *_positive / Annotation_map columns (as
+        before), this attaches spatial coordinates to `adata.obsm['spatial']` - the standard
+        scanpy/squidpy convention - so the returned AnnData is directly usable for spatial
+        plotting (e.g. `sq.pl.spatial_scatter`, or a plain `plt.scatter(*adata.obsm['spatial'].T)`)
+        without a separate join back to `histomap.spot_geodata`. Coordinates are the centroid
+        of each spot/bin/cell's geometry, in the same full-resolution pixel space used
+        elsewhere in HistoMap (e.g. `full_res_width`/`full_res_height`), which works uniformly
+        across visium (circle), visium_hd (square bin), and xenium (cell segmentation polygon)
+        geometries - for a visium circle this centroid is just the original spot center.
+        """
+        adata = self.visium_spatialdata.tables[self._get_table_key()].copy()
         spot_geodata = self.spot_geodata.copy()
-        # transfer the metadata 
+
+        # Single x/y per spot/bin/cell, regardless of whether the underlying geometry is a
+        # circle, a square bin, or an arbitrary cell polygon.
+        spot_geodata['centroid_x'] = spot_geodata.geometry.centroid.x
+        spot_geodata['centroid_y'] = spot_geodata.geometry.centroid.y
+
+        # transfer the metadata
         df1 = spot_geodata.drop(columns='geometry', inplace=False)
         df2 = adata.obs
         # Perform the merge, keeping only the columns from df1 (spot_geodata)
         df_merged = pd.merge(df2, df1, on='spot_id', how='left', suffixes=('', '_drop'))
-        # Drop the unwanted columns (from df2) 
+        # Drop the unwanted columns (from df2)
         df_merged = df_merged.loc[:, ~df_merged.columns.str.endswith('_drop')]
         df_merged.index = df2.index
-        adata.obs = df_merged
+
+        adata.obsm['spatial'] = df_merged[['centroid_x', 'centroid_y']].to_numpy()
+        adata.obs = df_merged.drop(columns=['centroid_x', 'centroid_y'])
+
+        self._populate_uns_spatial(adata)
+
         return adata
+
+    def _populate_uns_spatial(self, adata):
+        """
+        Populate adata.uns['spatial'] with the classic Space Ranger / scanpy layout - hires and
+        lowres image arrays plus scale factors - so sc.pl.spatial works natively on the AnnData
+        returned by to_anndata(). Only done for visium_type == 'visium': Visium HD and Xenium
+        don't fit the single hires/lowres-image convention scanpy expects here, and HistoMap's
+        own plotting functions (which use the full-resolution image directly) remain the
+        recommended way to plot those.
+
+        The scale factors are computed the same way Space Ranger's own scalefactors_json.json
+        does: `tissue_{res}_scalef` converts *full-resolution* pixel coordinates (the space
+        `adata.obsm['spatial']` is in, see above) down to the hires/lowres image's pixel grid -
+        which is what sc.pl.spatial expects and multiplies obsm['spatial'] by internally.
+        Images/scale factors are cached on first call since decoding them is comparatively
+        expensive and they don't change between calls.
+        """
+        if self.visium_type != 'visium':
+            return
+
+        if getattr(self, '_uns_spatial_cache', None) is None:
+            sdata = self.visium_spatialdata
+            hires_key = next((k for k in sdata.images if 'hires' in k.lower()), None)
+            lowres_key = next((k for k in sdata.images if 'lowres' in k.lower()), None)
+
+            if hires_key is None and lowres_key is None:
+                warnings.warn(
+                    "No hires/lowres image found in the SpatialData object; skipping "
+                    "adata.uns['spatial'] setup (sc.pl.spatial will not work on this AnnData)."
+                )
+                self._uns_spatial_cache = {}
+                return
+
+            def to_plot_array(image):
+                da = self._get_highest_resolution(image)
+                arr = np.moveaxis(np.asarray(da.values), 0, -1)  # (c, y, x) -> (y, x, c)
+                if arr.shape[-1] == 1:
+                    arr = arr[..., 0]
+                arr = arr.astype(np.float32)
+                max_val = arr.max()
+                if max_val > 1:
+                    arr = arr / max_val
+                return arr
+
+            images = {}
+            scalefactors = {}
+            for key, res_name in ((hires_key, "hires"), (lowres_key, "lowres")):
+                if key is None:
+                    continue
+                arr = to_plot_array(sdata.images[key])
+                images[res_name] = arr
+                scalefactors[f"tissue_{res_name}_scalef"] = arr.shape[1] / self.full_res_width
+
+            shape_key = list(sdata.shapes.keys())[0]
+            scalefactors["spot_diameter_fullres"] = float(sdata.shapes[shape_key]["radius"].iloc[0]) * 2
+
+            # Reuse whatever library id spatialdata_io already assigned (e.g. the dataset_id
+            # passed to spatialdata_io.visium()), if any, rather than inventing a new one.
+            existing_spatial = sdata.tables[self._get_table_key()].uns.get('spatial', {})
+            library_id = next(iter(existing_spatial), 'library')
+
+            self._uns_spatial_cache = {library_id: {"images": images, "scalefactors": scalefactors}}
+
+        if self._uns_spatial_cache:
+            adata.uns['spatial'] = self._uns_spatial_cache
     
     def to_spatialdata(self):
         """Return a SpatialData object with metadata from HistoMap"""
         spatialdata_obj = self.visium_spatialdata
-        adata = spatialdata_obj.tables['table'].copy()
-        # transfer the metadata 
+        table_key = self._get_table_key()
+        adata = spatialdata_obj.tables[table_key].copy()
+        # transfer the metadata
         df1 = self.spot_geodata.drop(columns='geometry')
         df2 = adata.obs
         df_merged = pd.merge(df2, df1, on='spot_id', how='left')
         df_merged.index = df2.index
         adata.obs = df_merged
-        spatialdata_obj.tables['table'] = adata
+        spatialdata_obj.tables[table_key] = adata
         return spatialdata_obj
-    
+
     def spot_metadata_to_df(self):
         """Return a csv with the metadata"""
-        adata = self.visium_spatialdata.tables['table']
-        # transfer the metadata 
+        table_key = self._get_table_key()
+        # transfer the metadata
         df1 = self.spot_geodata.drop(columns='geometry', inplace=False)
-        df2 = self.visium_spatialdata.tables['table'].obs
+        df2 = self.visium_spatialdata.tables[table_key].obs
         df_merged = pd.merge(df2, df1, on='spot_id', how='left')
         df_merged.index = df2.index
         return df_merged
     
-    def generate_annotation_map(self, annotate_all=True):
-        """Generate annotation map based on plot_order and positivity"""
+    def generate_annotation_map(self, annotate_all=True, conserve_hierarchy=False):
+        """Generate annotation map based on plot_order and positivity.
+
+        Parameters:
+        - annotate_all: If True, spots not positive for any annotation are assigned the
+          annotation they overlap the most (unaffected by conserve_hierarchy).
+        - conserve_hierarchy: If False (default), a spot positive for several annotations is
+          assigned only the one with the lowest plot_order (highest precedence) - the previous
+          behavior. If True, such spots are instead assigned a composite label listing every
+          positive annotation, ordered by plot_order (highest precedence first) and joined with
+          ':', e.g. 'artery:stroma'.
+        """
         # Create 'Annotation_map' column if it doesn't exist or reset it
         self.spot_geodata['Annotation_map'] = "None"
+
+        plot_order_map = {}
+
         for annotation in self.activated_annotations:
             # Check if the annotation exists in 'positive_threshold' with Overlay set to True
             positive_threshold_row = self.positive_threshold[self.positive_threshold['annotation'] == annotation]
-            
+
             if positive_threshold_row.empty:
                 raise ValueError(f"'{annotation}' not found in the object.")
-            
+
             if not positive_threshold_row['Overlay'].iloc[0]:
                 raise ValueError(f"Overlap for '{annotation}' was not computed. Run histomap.compute_overlap() first or disable the annotation layer with histomap.disable_annotation().")
-            
+
             # Gather the corresponding 'Annotation_positive' column for the annotation
             positive_column = f"{annotation}_positive"
 
@@ -919,24 +1116,38 @@ class HistoMap:
             if positive_column not in self.spot_geodata.columns:
                 raise ValueError(f"Column '{positive_column}' does not exist in 'spot_geodata'.")
 
-            
+
 
             # Get the 'plot_order' for the current annotation
             plot_order = self.data_exploded.loc[self.data_exploded['Annotation'] == annotation, 'plot_order'].iloc[0]
+            plot_order_map[annotation] = plot_order
 
-            # Assign annotations to spots based on positive status and plot_order
-            for idx, row in self.spot_geodata.iterrows():
-                if row[positive_column]:  # If the spot is positive for this annotation
-                    # If the spot is already assigned a positive annotation, check if it should be replaced
-                    if self.spot_geodata.at[idx, 'Annotation_map'] == "None":
-                        self.spot_geodata.at[idx, 'Annotation_map'] = annotation
-                    else:
-                        # If multiple annotations are positive, keep the one with the lowest plot_order
-                        current_annotation = self.spot_geodata.at[idx, 'Annotation_map']
-                        current_plot_order = self.data_exploded.loc[self.data_exploded['Annotation'] == current_annotation, 'plot_order'].iloc[0]
-
-                        if plot_order < current_plot_order:
+            if not conserve_hierarchy:
+                # Assign annotations to spots based on positive status and plot_order
+                for idx, row in self.spot_geodata.iterrows():
+                    if row[positive_column]:  # If the spot is positive for this annotation
+                        # If the spot is already assigned a positive annotation, check if it should be replaced
+                        if self.spot_geodata.at[idx, 'Annotation_map'] == "None":
                             self.spot_geodata.at[idx, 'Annotation_map'] = annotation
+                        else:
+                            # If multiple annotations are positive, keep the one with the lowest plot_order
+                            current_annotation = self.spot_geodata.at[idx, 'Annotation_map']
+                            current_plot_order = plot_order_map[current_annotation]
+
+                            if plot_order < current_plot_order:
+                                self.spot_geodata.at[idx, 'Annotation_map'] = annotation
+
+        if conserve_hierarchy:
+            # Combine every positive annotation for a spot into a single ':'-joined label,
+            # ordered by plot_order (highest precedence first), e.g. 'artery:stroma'.
+            for idx, row in self.spot_geodata.iterrows():
+                positive_annotations = [
+                    annotation for annotation in self.activated_annotations
+                    if row[f"{annotation}_positive"]
+                ]
+                if positive_annotations:
+                    positive_annotations.sort(key=lambda ann: plot_order_map[ann])
+                    self.spot_geodata.at[idx, 'Annotation_map'] = ":".join(positive_annotations)
 
         # After all positive annotations have been processed, if annotate_all is True, handle spots that are still "None"
         if annotate_all:

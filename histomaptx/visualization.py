@@ -9,7 +9,7 @@ import matplotlib.cm as cm
 import warnings
 import spatialdata
 import geopandas as gpd
-from shapely.geometry import Polygon, Point
+from shapely.geometry import Polygon, Point, box
 import numpy as np
 from . import histomap_utils
 import seaborn as sns 
@@ -19,6 +19,56 @@ import spatialdata_plot
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
 import numpy as np
+
+def _resolve_annotation_color(label, color_dict, default_color="#cccccc"):
+    """
+    Resolve a display color for an Annotation_map label.
+
+    A label is normally a single annotation name, looked up directly in `color_dict`. When
+    generate_annotation_map() was run with conserve_hierarchy=True, a label can instead be a
+    ':'-joined composite of several annotations a spot is positive for (e.g. 'artery:stroma');
+    such composites are colored by blending the colors of their constituent annotations, falling
+    back to `default_color` for any part with no assigned color. Always returns a hex string
+    (some consumers, e.g. spatialdata_plot's render_shapes, reject RGB tuples in a palette).
+    """
+    import matplotlib.colors as mcolors
+
+    if label in color_dict:
+        return mcolors.to_hex(color_dict[label])
+
+    parts = label.split(":")
+    if len(parts) > 1:
+        rgbs = [mcolors.to_rgb(color_dict.get(part, default_color)) for part in parts]
+        return mcolors.to_hex(tuple(np.mean(rgbs, axis=0)))
+
+    return mcolors.to_hex(default_color)
+
+
+def _resolve_vlim(value, data):
+    """
+    Resolve a vmin/vmax spec into a concrete float.
+
+    Accepts a plain number, used as-is, or a percentile string like 'p90' (90th percentile of
+    `data`, the actual column values being plotted) or 'p99.5'. Returns None unchanged, so
+    callers can tell "not set" (let the plotting library auto-scale) apart from an explicit value.
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, str):
+        spec = value.strip().lower()
+        if spec.startswith("p"):
+            try:
+                pct = float(spec[1:])
+            except ValueError:
+                raise ValueError(f"Invalid percentile spec '{value}'. Expected e.g. 'p90'.")
+            if not (0 <= pct <= 100):
+                raise ValueError(f"Percentile in '{value}' must be between 0 and 100.")
+            return float(np.percentile(data, pct))
+        raise ValueError(f"Invalid vmin/vmax spec '{value}'. Use a number or a percentile string like 'p90'.")
+
+    return float(value)
+
 
 def polygon_to_path(polygon):
     """Convert a Shapely Polygon (with holes) to a Matplotlib Path."""
@@ -204,7 +254,15 @@ def plot_annotation_overlay(
     display_image=True,
     save=None,
     cmap=None,
+    vmin=None,
+    vmax=None,
 ):
+    """
+    vmin / vmax: color scale bounds for the overlap percentage. Each accepts a plain number, or
+    a percentile string like 'p90' / 'p99.5', resolved against that annotation's own
+    '<annotation>_overlap' values (so e.g. vmax='p90' clips the top 10% of overlap values to the
+    same color, useful when a few spots skew the scale). None (default) lets it auto-scale.
+    """
 
     if isinstance(annotation, str):
         annotation = [annotation]
@@ -233,6 +291,10 @@ def plot_annotation_overlay(
 
         overlap_col = ann + "_overlap"
 
+        # Resolve percentile specs (e.g. 'p90') against this annotation's own overlap values
+        resolved_vmin = _resolve_vlim(vmin, histomap.spot_geodata[overlap_col])
+        resolved_vmax = _resolve_vlim(vmax, histomap.spot_geodata[overlap_col])
+
         if histomap.visium_type == "visium_hd":
 
             sdata = histomap.visium_spatialdata
@@ -254,6 +316,8 @@ def plot_annotation_overlay(
                 display_image=display_image,
                 save=save,
                 cmap=cmap,
+                vmin=resolved_vmin,
+                vmax=resolved_vmax,
             )
 
         elif histomap.visium_type == "visium":
@@ -276,12 +340,49 @@ def plot_annotation_overlay(
                 display_image=display_image,
                 save=save,
                 cmap=cmap,
+                vmin=resolved_vmin,
+                vmax=resolved_vmax,
             )
 
         else:
-            raise ValueError(
-                f"Unsupported visium_type: {histomap.visium_type}"
+            # Generic fallback (e.g. Xenium): no spatialdata_plot rendering path for this
+            # visium_type, so fall back to plain matplotlib + geopandas, matching the pattern
+            # used by plot_annotation_map's own generic fallback.
+            fig, ax = plt.subplots(figsize=figsize)
+
+            if display_image and hasattr(histomap, 'plotting_image') and histomap.plotting_image is not None:
+                extent = [0, histomap.full_res_width, histomap.full_res_height, 0]
+                ax.imshow(
+                    histomap.plotting_image.values.transpose(1, 2, 0),
+                    extent=extent,
+                    origin='upper',
+                    cmap='gray',
+                )
+
+            gdf = histomap.spot_geodata
+            if xcoords is not None and ycoords is not None:
+                bounds_box = box(xcoords[0], ycoords[0], xcoords[1], ycoords[1])
+                gdf = gdf[gdf.geometry.intersects(bounds_box)]
+
+            gdf.plot(
+                ax=ax,
+                column=overlap_col,
+                cmap=cmap or 'Reds',
+                vmin=resolved_vmin,
+                vmax=resolved_vmax,
+                legend=True,
+                legend_kwds={'label': f"{ann} overlap (%)", 'shrink': 0.6},
             )
+
+            ax.set_title(f"{ann} overlap", fontsize=14)
+            ax.axis('off')
+            plt.tight_layout()
+
+            if save:
+                plt.savefig(save, dpi=300, bbox_inches='tight')
+                print(f"Figure saved to {save}")
+
+            plt.show()
 
 def plot_annotation_overlay_old(
     histomap,
@@ -435,16 +536,16 @@ def plot_annotation_overlay_old(
 
 
 def plot_annotations(histomap, fill=False, contour=None, annotation=None,
-                     display_image=False, alpha=1, save=None):
+                     display_image=False, alpha=1, save=None, figsize=(10, 10)):
     """Plots the annotations based on the DataFrame, respecting the plot order.
-    
+
     Parameters:
     - histomap: HistoMap object containing annotation data.
-    - fill: False, True, or a list of colors. 
-            False means no fill (only contours), 
-            True uses colors from histomap.annotation_colors, 
+    - fill: False, True, or a list of colors.
+            False means no fill (only contours),
+            True uses colors from histomap.annotation_colors,
             a list of colors specifies the fill color for each annotation.
-    - contour: a color or list of colors for the contours. 
+    - contour: a color or list of colors for the contours.
                If None, uses colors from histomap.annotation_colors or default colormap.
     - annotation: a specific annotation (string) or a list of annotations to plot. If None, all annotations are plotted.
     - display_image: bool, whether to display `histomap.plotting_image` beneath the annotations.
@@ -452,14 +553,15 @@ def plot_annotations(histomap, fill=False, contour=None, annotation=None,
              Only applies when fill is not False.
     - save: str or None. File path to save the figure. Format inferred from extension
             (e.g., .png, .pdf). If None, the figure is not saved.
+    - figsize: tuple, size of the figure (width, height) in inches.
     """
     import os
 
     # Validate alpha parameter
     if not (0 <= alpha <= 1):
         raise ValueError("Alpha must be between 0 and 1")
-    
-    fig, ax = plt.subplots(figsize=(10, 10))
+
+    fig, ax = plt.subplots(figsize=figsize)
 
     # Display the image beneath the annotations
     if display_image and hasattr(histomap, 'plotting_image') and histomap.plotting_image is not None:
@@ -1007,10 +1109,12 @@ def plot_annotation_map(histomap, display_image=True, save=None, resolution="low
         sdata = histomap.visium_spatialdata
         table_key = list(sdata.tables.keys())[0]
 
-        if "Annotation_map" not in sdata.tables[table_key].obs:
-            sdata.tables[table_key].obs["Annotation_map"] = (
-                histomap.spot_geodata["Annotation_map"].values
-            )
+        # Always resync: Annotation_map can change between calls (e.g. re-running
+        # generate_annotation_map with a different threshold/order/conserve_hierarchy), and a
+        # stale cached column here would silently plot outdated labels.
+        sdata.tables[table_key].obs["Annotation_map"] = (
+            histomap.spot_geodata["Annotation_map"].values
+        )
         groups, palette = get_palette_and_groups(
             histomap,         
             sdata,
@@ -1071,7 +1175,7 @@ def plot_annotation_map(histomap, display_image=True, save=None, resolution="low
                 x_coords = annotation_spots.geometry.centroid.x
                 y_coords = annotation_spots.geometry.centroid.y
 
-            spot_color = color_dict.get(annotation, cmap(i))
+            spot_color = _resolve_annotation_color(annotation, color_dict, default_color=cmap(i))
             
             ax.scatter(
                 x_coords,
@@ -1265,7 +1369,9 @@ def plot_visium_hd(
     figsize=(10, 10),
     display_image=True,           # True → only shapes, no background image
     save=None,                    # None or path to save figure
-    cmap=None
+    cmap=None,
+    vmin=None,
+    vmax=None,
 ):
     sdata = histomap.visium_spatialdata
     bin_size = histomap.bin_size
@@ -1303,11 +1409,13 @@ def plot_visium_hd(
     # ---- 4️⃣ Match table ----
     table_key = next(k for k in sdata.tables.keys() if bin_str in k)
 
-    # ---- 5️⃣ Attach annotation if missing ----
-    if annotation_key not in sdata.tables[table_key].obs:
-        sdata.tables[table_key].obs[annotation_key] = (
-            histomap.spot_geodata[annotation_key].values
-        )
+    # ---- 5️⃣ Attach/resync annotation ----
+    # Always resync from spot_geodata (the source of truth): a stale cached column here
+    # (e.g. from an earlier call, before Annotation_map was regenerated) would otherwise
+    # silently plot outdated labels.
+    sdata.tables[table_key].obs[annotation_key] = (
+        histomap.spot_geodata[annotation_key].values
+    )
 
     # ---- 6️⃣ Optional crop ----
     if xcoords is not None and ycoords is not None:
@@ -1320,12 +1428,18 @@ def plot_visium_hd(
         )
 
     # ---- 7️⃣ Prepare rendering ----
+    norm = None
+    if vmin is not None or vmax is not None:
+        import matplotlib.colors as mcolors
+        norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+
     if display_image:
         p = sdata.pl.render_images(image_key).pl.render_shapes(
             shape_key,
             color=annotation_key,
             datashader_reduction="mean",
             cmap=cmap,
+            norm=norm,
         )
     else:
         p = sdata.pl.render_shapes(
@@ -1333,6 +1447,7 @@ def plot_visium_hd(
             color=annotation_key,
             datashader_reduction="mean",
             cmap=cmap,
+            norm=norm,
         )
 
     # ---- 8️⃣ Show ----
@@ -1361,9 +1476,11 @@ def plot_visium(
     figsize=(10, 10),
     display_image=True,
     save=None,
-    cmap=None, 
-    palette=None, 
-    groups=None
+    cmap=None,
+    palette=None,
+    groups=None,
+    vmin=None,
+    vmax=None,
 ):
     import matplotlib.pyplot as plt
 
@@ -1415,6 +1532,11 @@ def plot_visium(
     elif cmap is not None:
         kwargs["cmap"] = cmap
         print(cmap)
+
+    if vmin is not None or vmax is not None:
+        import matplotlib.colors as mcolors
+        kwargs["norm"] = mcolors.Normalize(vmin=vmin, vmax=vmax)
+
     print(kwargs)
     p = sdata.pl.render_shapes(shape_key, **kwargs)
 
@@ -1454,6 +1576,8 @@ def get_palette_and_groups(histomap, sdata, table_key, annotation_key, default_c
     Robust version:
     - Uses histomap colors when available
     - Falls back to default_color if missing
+    - Blends colors for composite ':'-joined labels produced by
+      generate_annotation_map(conserve_hierarchy=True), e.g. 'artery:stroma'
     """
 
     # Full mapping from histomap
@@ -1465,11 +1589,11 @@ def get_palette_and_groups(histomap, sdata, table_key, annotation_key, default_c
     obs = sdata.tables[table_key].obs[annotation_key].astype("category")
     groups = list(obs.cat.categories)
 
-    # robust mapping
-    missing = [g for g in groups if g not in color_dict]
+    # robust mapping (composite ':'-joined labels are resolved by blending below, not flagged here)
+    missing = [g for g in groups if g not in color_dict and ":" not in g]
     if missing:
         print(f" Missing colors for: {missing} → using fallback '{default_color}'")
 
-    palette = [color_dict.get(g, default_color) for g in groups]
+    palette = [_resolve_annotation_color(g, color_dict, default_color) for g in groups]
 
     return groups, palette
